@@ -457,17 +457,26 @@ void refineLM(const std::vector<View>& views, CalibResult& res) {
                 }
 
                 // ---- Block 4: (Xc,Yc,Zc) 对旋转增量 dw ----
-                //  dXc/dw = -[Xc]x,  其中 [Xc]x = [ 0  -Zc   Yc ]
-                //                                 [ Zc   0  -Xc ]
-                //                                 [-Yc   Xc   0  ]
-                // 于是 dXc/dw 的三列分别是:
-                //    col0 = -[Xc]x * e0 = -(0, Zc, -Yc)  = (0, -Zc, Yc)
-                //    col1 = -( -Zc, 0, Xc) = (Zc, 0, -Xc)
-                //    col2 = -( Yc, -Xc, 0) = (-Yc, Xc, 0)
+                //  旋转扰动是左乘:  R -> rodrigues(dw) * R
+                //    Xc' = (I + [dw]x)(R*X) + t = Xc + dw x (R*X)
+                //  所以 [dw]x 作用在 R*X 上, 不是作用在 Xc 上。
+                //
+                //  !! 这里写成 Xc 是极容易犯的错误: 平移量 t 不随旋转变化,
+                //     多减或多加一个 t 会让旋转那三列全部偏掉, 表现为
+                //     LM 几乎不收敛、畸变系数估不出来。用有限差分一验就露。
+                //     tools/verify_jacobian.py 就是干这个的。
+                const double vrot[3] = { Xc[0] - t[i][0],
+                                         Xc[1] - t[i][1],
+                                         Xc[2] - t[i][2] };      // 就是 R*X
+
+                //  dXc/dw 的第 b 列 = dXc/dw_b:
+                //    dw x v 对 dw0 求导 = ( 0, -v2,  v1)
+                //    dw x v 对 dw1 求导 = ( v2,  0, -v0)
+                //    dw x v 对 dw2 求导 = (-v1,  v0,  0)
                 const double dXdw[3][3] = {
-                    {  0.0,   Zc,  -Xc[1] },
-                    { -Zc,   0.0,   Xc[0] },
-                    {  Xc[1], -Xc[0], 0.0 }
+                    {  0.0,   vrot[2], -vrot[1] },
+                    { -vrot[2], 0.0,    vrot[0] },
+                    {  vrot[1], -vrot[0], 0.0   }
                 };
 
                 // J_rot = M3 * dXdw       (2x3)
@@ -512,7 +521,7 @@ void refineLM(const std::vector<View>& views, CalibResult& res) {
     double mu = 1e-3;
     double nu = 2.0;
 
-    const int maxIter = 60;
+    const int maxIter = 200;      // 收敛会自动 break，这里给足余量
     for (int iter = 0; iter < maxIter; ++iter) {
         Mat J;
         calcJacobian(J);
@@ -526,14 +535,17 @@ void refineLM(const std::vector<View>& views, CalibResult& res) {
         // 法方程矩阵 A = J^T J
         Mat A = matmul(transpose(J), J);
 
-        // 阻尼矩阵 D = diag(A)，并按标准做法把 mu 初值定成 tau * max(diag)
+        // 阻尼矩阵 D = diag(A)。
+        //
+        // 这里用的是 Marquardt 形式:  (A + mu * diag(A)) * delta = -g
+        // mu 是**无量纲**的, 初值取 1e-3 即可（见上面的 mu 定义）。
+        //
+        // !! 不要再写 mu = 1e-3 * max(diag(A)) —— 那是 Levenberg 形式
+        //    (A + mu * I) 的初值取法。两种约定混用等于把 diag(A) 乘了两次,
+        //    阻尼会大到步长恒为零, 表现为"程序不报错、残差也不涨, 但参数
+        //    一动不动"。这个坑很隐蔽, 只有拿有畸变的数据才看得出来。
         Vec D(NP, 0.0);
-        double maxDiag = 0.0;
-        for (int i = 0; i < NP; ++i) {
-            D[i] = A.at(i, i);
-            maxDiag = std::max(maxDiag, D[i]);
-        }
-        if (iter == 0) mu = 1e-3 * (maxDiag > 0 ? maxDiag : 1.0);
+        for (int i = 0; i < NP; ++i) D[i] = A.at(i, i);
 
         // 解 (A + mu*D) * delta = -g
         bool stepped = false;

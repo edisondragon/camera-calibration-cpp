@@ -32,8 +32,15 @@ add_executable(zhang_calib
 target_include_directories(zhang_calib PRIVATE src)
 
 # 生成的程序放在项目根目录下的 bin/
+# 多配置生成器（Visual Studio）默认会在后面再拼一层 Release/，
+# 这里把每个配置都显式指到 bin/，保证各平台路径一致，CI 里好写。
 set_target_properties(zhang_calib PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/bin")
+
+foreach(_cfg IN ITEMS DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+    set_target_properties(zhang_calib PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY_${_cfg} "${CMAKE_SOURCE_DIR}/bin")
+endforeach()
 
 # ---------------------------------------------------------------------------
 #  安装
