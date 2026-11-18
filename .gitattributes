@@ -1,0 +1,12 @@
+# 统一换行符：仓库内一律存 LF，检出时按平台处理
+# 这样在 Linux / macOS 上克隆不会出现 CRLF 导致的编译警告
+* text=auto eol=lf
+
+# 二进制文件不做换行符转换
+*.png binary
+*.jpg binary
+*.pdf binary
+*.ply binary
+
+# 在 GitHub 上把生成的代码标记为"非手写"，折叠 diff
+data/synthetic.txt linguist-generated=true
